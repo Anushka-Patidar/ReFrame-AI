@@ -108,6 +108,22 @@ export const api = {
         error: string | null
       }
     }),
+  resetGeneration: () =>
+    fetch(`${API_BASE_URL.replace(/\/api$/, '')}/api/system/generation-reset`, {
+      method: 'POST',
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error('Unable to clear the previous generation.')
+      }
+      return (await response.json()) as {
+        stage: string
+        label: string
+        busy: boolean
+        step: number | null
+        total_steps: number | null
+        error: string | null
+      }
+    }),
   signup: (payload: {
     name: string
     email: string

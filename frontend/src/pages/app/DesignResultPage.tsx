@@ -74,6 +74,14 @@ export function DesignResultPage() {
     setIsGenerating(true)
     try {
       window.localStorage.setItem('reframe-quality-mode', qualityMode)
+      try {
+        const status = await api.getGenerationStatus()
+        if (status.busy) {
+          await api.resetGeneration()
+        }
+      } catch {
+        // Ignore and continue.
+      }
       const nextDesign = await api.generateDesign(token, roomId, qualityMode)
       if (
         room?.original_image_url &&
@@ -87,11 +95,20 @@ export function DesignResultPage() {
       setDesigns((current) => [...current, nextDesign])
       navigate(`/app/design-studio/${roomId}/result/${nextDesign.id}`)
     } catch (requestError) {
-      setError(
+      const message =
         requestError instanceof Error
           ? requestError.message
-          : "Local generation couldn't complete. Please retry.",
-      )
+          : "Local generation couldn't complete. Please retry."
+      if (message.toLowerCase().includes('already in progress')) {
+        try {
+          await api.resetGeneration()
+          setError('A stuck redesign was cleared. Click Generate Another again.')
+        } catch {
+          setError(message)
+        }
+      } else {
+        setError(message)
+      }
     } finally {
       setIsGenerating(false)
     }

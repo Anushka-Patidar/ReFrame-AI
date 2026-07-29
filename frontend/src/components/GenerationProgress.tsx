@@ -14,10 +14,16 @@ type Props = {
 
 export function GenerationProgress({ active }: Props) {
   const [label, setLabel] = useState<string>(FALLBACK_STAGES[0])
+  const [detail, setDetail] = useState<string>(
+    'This can take a few minutes on this device. ReFrame will not show a fake result.',
+  )
 
   useEffect(() => {
     if (!active) {
       setLabel(FALLBACK_STAGES[0])
+      setDetail(
+        'This can take a few minutes on this device. ReFrame will not show a fake result.',
+      )
       return
     }
 
@@ -32,6 +38,13 @@ export function GenerationProgress({ active }: Props) {
         if (status.busy && status.label) {
           receivedLive = true
           setLabel(status.label)
+          if (status.step != null && status.total_steps != null && status.total_steps > 0) {
+            setDetail(`Working on step ${status.step} of ${status.total_steps}. Please keep this page open.`)
+          } else {
+            setDetail('ReFrame is still working. Please keep this page open.')
+          }
+        } else if (status.error) {
+          setDetail(status.error)
         }
       } catch {
         // Fall back to timed stage labels below.
@@ -67,9 +80,7 @@ export function GenerationProgress({ active }: Props) {
         </span>
         <p className="text-sm font-medium text-ink-900">{label}</p>
       </div>
-      <p className="mt-2 text-sm leading-6 text-ink-500">
-        This can take a few minutes on this device. ReFrame will not show a fake result.
-      </p>
+      <p className="mt-2 text-sm leading-6 text-ink-500">{detail}</p>
     </div>
   )
 }

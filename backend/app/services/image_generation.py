@@ -16,9 +16,11 @@ from app.core.config import settings
 from app.db.database import get_database
 from app.models.collections import REGION_CONSTRAINTS
 from app.services.generation_runtime import (
+    MAX_GENERATION_SECONDS,
     USER_BUSY_ERROR,
     USER_GENERIC_ERROR,
     USER_RESOURCE_ERROR,
+    USER_TIMEOUT_ERROR,
     generation_gate,
 )
 from app.services.hardware import detect_hardware, hardware_dict
@@ -341,22 +343,32 @@ async def generate_design_image(
     if (settings.image_provider or "local").strip().lower() != "local":
         raise InsufficientTransformError(USER_GENERIC_ERROR)
 
-    if not generation_gate.try_begin():
+    job_id = generation_gate.try_begin()
+    if job_id is None:
         raise GenerationBusyError(USER_BUSY_ERROR)
 
     failed = False
     error_message: str | None = None
     try:
         user_region_masks = await _load_user_region_masks(room)
-        return await asyncio.to_thread(
-            _generate_sync,
-            room,
-            requirements,
-            revision_note,
-            memory_document,
-            user_region_masks,
-            requested_profile,
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                _generate_sync,
+                room,
+                requirements,
+                revision_note,
+                memory_document,
+                user_region_masks,
+                requested_profile,
+            ),
+            timeout=MAX_GENERATION_SECONDS,
         )
+    except asyncio.TimeoutError as exc:
+        failed = True
+        error_message = USER_TIMEOUT_ERROR
+        generation_gate.force_reset(error=USER_TIMEOUT_ERROR)
+        logger.error("Generation timed out after %ss", MAX_GENERATION_SECONDS)
+        raise InsufficientTransformError(USER_TIMEOUT_ERROR) from exc
     except InsufficientTransformError as exc:
         failed = True
         error_message = str(exc) or USER_GENERIC_ERROR
@@ -364,7 +376,7 @@ async def generate_design_image(
     except RuntimeError as exc:
         failed = True
         message = str(exc)
-        if message in {USER_RESOURCE_ERROR, USER_GENERIC_ERROR, USER_BUSY_ERROR}:
+        if message in {USER_RESOURCE_ERROR, USER_GENERIC_ERROR, USER_BUSY_ERROR, USER_TIMEOUT_ERROR}:
             error_message = message
             raise InsufficientTransformError(message) from exc
         logger.exception("Unexpected generation failure")
@@ -376,7 +388,7 @@ async def generate_design_image(
         error_message = USER_GENERIC_ERROR
         raise InsufficientTransformError(USER_GENERIC_ERROR) from exc
     finally:
-        generation_gate.end(failed=failed, error=error_message)
+        generation_gate.end(job_id, failed=failed, error=error_message)
 
 
 def log_startup_hardware() -> None:

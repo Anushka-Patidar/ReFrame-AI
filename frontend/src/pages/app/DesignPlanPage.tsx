@@ -134,12 +134,32 @@ export function DesignPlanPage() {
       setRequirements(payload)
       await api.updateRequirements(token, roomId, payload)
       window.localStorage.setItem('reframe-quality-mode', qualityMode)
+
+      // If a previous redesign got stuck, clear it once before starting.
+      try {
+        const status = await api.getGenerationStatus()
+        if (status.busy) {
+          await api.resetGeneration()
+        }
+      } catch {
+        // Ignore status/reset failures and continue with generate.
+      }
+
       const design = await api.generateDesign(token, roomId, qualityMode)
       navigate(`/app/design-studio/${roomId}/result/${design.id}`)
     } catch (generateError) {
-      setError(
-        generateError instanceof Error ? generateError.message : 'Unable to generate design.',
-      )
+      const message =
+        generateError instanceof Error ? generateError.message : 'Unable to generate design.'
+      if (message.toLowerCase().includes('already in progress')) {
+        try {
+          await api.resetGeneration()
+          setError('A stuck redesign was cleared. Click Generate again.')
+        } catch {
+          setError(message)
+        }
+      } else {
+        setError(message)
+      }
     } finally {
       setIsGenerating(false)
     }
@@ -286,8 +306,8 @@ export function DesignPlanPage() {
                 ))}
               </div>
               <p className="mt-3 text-xs leading-6 text-ink-500">
-                Quick Preview uses the fast lightweight path. Balanced and Best Quality use the
-                architecture-preserving SD1.5 workflow.
+                Quick Preview finishes in about a minute. Balanced/Best Quality take longer on this
+                computer because they preserve room structure more carefully.
               </p>
             </div>
             <button

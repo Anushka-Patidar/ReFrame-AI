@@ -55,3 +55,12 @@ async def ai_capabilities() -> AiCapabilitiesResponse:
 async def generation_status() -> dict:
     """Live local-generation stage for the product UI (no fake percentages)."""
     return get_generation_progress()
+
+
+@app.post("/api/system/generation-reset")
+async def generation_reset() -> dict:
+    """Clear a stuck generation lock so the user can retry."""
+    generation_gate.force_reset(
+        error="Generation was cleared. You can start a new redesign."
+    )
+    return get_generation_progress()
