@@ -12,9 +12,11 @@ from PIL import Image
 from app.core.config import settings
 from app.services.design_brief import DesignBrief
 from app.services.generation_runtime import USER_GENERIC_ERROR, generation_gate
+from app.services.hardware import choose_profile
 from app.services.pipeline.constraints import build_constraints
 from app.services.pipeline.design_reasoning import reason_design_brief
 from app.services.pipeline.result_validation import (
+    build_retry_overrides,
     build_correction_instruction,
     validate_design_result,
 )
@@ -28,6 +30,7 @@ from app.services.pipeline.types import (
 )
 from app.services.pipeline.types import ObjectMask
 from app.services.providers import GenerationResult
+from app.services.providers.local_controlled import get_controlled_provider
 from app.services.providers.local_diffusion import get_local_provider
 from app.services.providers.local_inpainting import get_inpainting_provider
 
@@ -54,6 +57,7 @@ def run_redesign_pipeline(
     memory_document: dict | None = None,
     user_region_masks: list[ObjectMask] | None = None,
     max_attempts: int | None = None,
+    requested_profile: str | None = None,
 ) -> PipelineRunResult:
     """Execute the modular redesign pipeline with bounded generate→validate→retry."""
     attempts = max(1, min(int(max_attempts or settings.local_max_retries or DEFAULT_MAX_ATTEMPTS), 3))
@@ -68,6 +72,8 @@ def run_redesign_pipeline(
     )
     constraints = build_constraints(brief, room_analysis)
 
+    profile = choose_profile(requested=requested_profile)
+
     generation_gate.set_stage("preparing")
     segmentation = prepare_segmentation(
         source_image,
@@ -75,20 +81,31 @@ def run_redesign_pipeline(
         enabled=False,
         user_region_masks=user_region_masks,
     )
-    structure = prepare_structural_signals(source_image, compute_lightweight_edges=True)
+    structure = prepare_structural_signals(
+        source_image,
+        segmentation=segmentation,
+        compute_lightweight_edges=True,
+    )
 
-    # Choose provider: inpainting when we have editable masks, else img2img preview.
     has_edit_mask = bool(segmentation.edit_mask_path)
-    if has_edit_mask:
-        try:
-            provider = get_inpainting_provider()
-            logger.info("REFRAME_PIPELINE using inpainting provider (edit mask available)")
-        except Exception:
-            logger.warning("Inpainting provider unavailable; falling back to img2img")
-            provider = get_local_provider()
-    else:
+    if profile.name == "preview" and not has_edit_mask:
         provider = get_local_provider()
-        logger.info("REFRAME_PIPELINE using img2img provider (no edit mask)")
+        logger.info("REFRAME_PIPELINE using preview provider (Tiny-SD)")
+    else:
+        try:
+            provider = get_controlled_provider()
+            logger.info(
+                "REFRAME_PIPELINE using controlled provider profile=%s edit_mask=%s",
+                profile.name,
+                has_edit_mask,
+            )
+        except Exception:
+            if has_edit_mask:
+                provider = get_inpainting_provider()
+                logger.warning("Controlled provider unavailable; falling back to inpainting-only provider")
+            else:
+                provider = get_local_provider()
+                logger.warning("Controlled provider unavailable; falling back to preview provider")
 
     if settings.debug_mask_pipeline:
         try:
@@ -121,6 +138,9 @@ def run_redesign_pipeline(
             canny_created = bool(getattr(structure, "edges_available", False))
             canny_dims = list(source_image.size)
             canny_path = getattr(structure, "edges_path", None) or ""
+            condition_path = getattr(structure, "architecture_condition_path", None) or ""
+            masked_suppression = bool(getattr(structure, "masked_edit_suppression", False))
+            suppressed_pct = getattr(structure, "suppressed_pixel_percentage", None)
 
             supports_masks = bool(getattr(provider, "supports_masks", False))
             supports_structure = bool(getattr(provider, "supports_structure", False))
@@ -164,10 +184,14 @@ def run_redesign_pipeline(
                 f"canny_created: {canny_created}\n"
                 f"canny_dimensions: {canny_dims}\n"
                 f"canny_path: {canny_path}\n"
+                f"architecture_condition_path: {condition_path}\n"
+                f"editable_regions_suppressed: {masked_suppression}\n"
+                f"suppressed_pixel_percentage: {suppressed_pct}\n"
                 "\n"
                 "GENERATION PROVIDER\n"
                 "-------------------\n"
                 f"provider: {getattr(provider, 'name', 'local')}\n"
+                f"profile: {profile.name}\n"
                 f"supports_masks: {supports_masks}\n"
                 f"supports_structure: {supports_structure}\n"
                 + (f"debug_preview_path: {preview_path}\n" if preview_path else "")
@@ -179,6 +203,7 @@ def run_redesign_pipeline(
     last_generation: GenerationResult | None = None
     active_brief = brief
     correction: str | None = None
+    retry_overrides: dict[str, float | int | None] = {}
 
     for attempt in range(1, attempts + 1):
         generation_gate.set_stage("redesigning")
@@ -199,9 +224,13 @@ def run_redesign_pipeline(
                 source_image,
                 active_brief,
                 active_brief.transformation_strength,
+                profile=profile,
                 constraints=constraints,
                 segmentation=segmentation,
                 structure=structure,
+                strength_override=retry_overrides.get("strength_override"),
+                steps_override=retry_overrides.get("steps_override"),
+                structure_strength_override=retry_overrides.get("structure_strength_override"),
             )
         except TypeError:
             # Older provider signature without optional kwargs.
@@ -220,6 +249,8 @@ def run_redesign_pipeline(
             constraints,
             attempt=attempt,
             segmentation=segmentation,
+            structure=structure,
+            mode="precision" if has_edit_mask else "automatic",
         )
         last_report = report
         logger.info(
@@ -236,6 +267,11 @@ def run_redesign_pipeline(
 
         if attempt < attempts:
             correction = build_correction_instruction(report, active_brief)
+            retry_overrides = build_retry_overrides(
+                report,
+                has_mask=has_edit_mask,
+                current=retry_overrides,
+            )
             try:
                 generation.image.close()
             except Exception:

@@ -21,6 +21,7 @@ class LocalAiProfile:
     display_max_side: int
     # Design-transform strength (appearance). Structure is NOT solved by this alone.
     design_strength: float
+    structure_strength: float
     scheduler: str  # ddim | pndm | euler | default
     mild_sharpen: bool = True
 
@@ -34,25 +35,28 @@ PROFILES: dict[str, LocalAiProfile] = {
         guidance=6.5,
         display_max_side=960,
         design_strength=0.50,
+        structure_strength=0.0,
         scheduler="ddim",
     ),
     "balanced": LocalAiProfile(
         name="balanced",
-        max_side=384,
-        steps=16,
-        guidance=7.0,
+        max_side=448,
+        steps=18,
+        guidance=7.2,
         display_max_side=1200,
         design_strength=0.55,
+        structure_strength=0.72,
         scheduler="ddim",
     ),
     "quality": LocalAiProfile(
         name="quality",
-        max_side=448,
-        steps=20,
-        guidance=7.25,
+        max_side=512,
+        steps=24,
+        guidance=7.4,
         display_max_side=1280,
         # Slightly lower strength at higher res to reduce melted furniture.
         design_strength=0.52,
+        structure_strength=0.86,
         scheduler="ddim",
     ),
 }
@@ -114,14 +118,14 @@ def choose_profile(
     avail = available_ram_gb or 0.0
     total = total_ram_gb or 0.0
 
-    # Peak RSS for tiny-sd was ~2.7 GB; leave headroom for OS + browser.
+    # Preview is now explicit-only. Auto mode should prefer the controlled SD1.5 path.
     if cuda_available and avail >= 2.0:
         return PROFILES["quality"]
-    if avail >= 3.8 and total >= 12.0:
+    if avail >= 8.0 and total >= 16.0:
         return PROFILES["quality"]
-    if avail >= 2.6 and total >= 12.0:
+    if avail >= 4.0 and total >= 12.0:
         return PROFILES["balanced"]
-    return PROFILES["preview"]
+    return PROFILES["balanced"]
 
 
 @lru_cache(maxsize=1)

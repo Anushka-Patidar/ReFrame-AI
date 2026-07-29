@@ -21,9 +21,9 @@ Stage = Literal[
 STAGE_LABELS: dict[str, str] = {
     "idle": "Ready",
     "analyzing": "Analyzing your room",
-    "preparing": "Preparing your design",
-    "redesigning": "Redesigning the interior",
-    "refining": "Refining your room",
+    "preparing": "Preserving room structure",
+    "redesigning": "Applying your design direction",
+    "refining": "Finalizing your room",
     "ready": "Design ready",
     "failed": "Generation could not complete",
     "busy": "Another redesign is already in progress",

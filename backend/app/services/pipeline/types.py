@@ -170,7 +170,11 @@ class StructuralSignals:
     depth_available: bool = False
     geometry_available: bool = False
     edges_path: str | None = None
+    architecture_condition_path: str | None = None
+    suppressed_edges_path: str | None = None
     depth_path: str | None = None
+    masked_edit_suppression: bool = False
+    suppressed_pixel_percentage: float | None = None
     notes: str = "Structural conditioning interface only — no heavy model loaded."
 
     def to_dict(self) -> dict:

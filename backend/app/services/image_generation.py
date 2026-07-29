@@ -255,6 +255,7 @@ def _generate_sync(
     revision_note: str | None,
     memory_document: dict | None = None,
     user_region_masks: list[ObjectMask] | None = None,
+    requested_profile: str | None = None,
 ) -> tuple[str, str, dict]:
     """Run modular pipeline and persist the accepted candidate.
 
@@ -273,6 +274,7 @@ def _generate_sync(
             revision_note=revision_note,
             memory_document=memory_document,
             user_region_masks=user_region_masks,
+            requested_profile=requested_profile,
         )
     except RuntimeError:
         raise
@@ -333,6 +335,7 @@ async def generate_design_image(
     requirements: dict | None,
     revision_note: str | None = None,
     memory_document: dict | None = None,
+    requested_profile: str | None = None,
 ) -> tuple[str, str, dict]:
     """Persist a locally redesigned room image. Never return the original as success."""
     if (settings.image_provider or "local").strip().lower() != "local":
@@ -352,6 +355,7 @@ async def generate_design_image(
             revision_note,
             memory_document,
             user_region_masks,
+            requested_profile,
         )
     except InsufficientTransformError as exc:
         failed = True

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -31,6 +32,10 @@ class DesignRequirements(BaseModel):
     colours: list[str] = Field(default_factory=list)
     avoid: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class GenerationRequest(BaseModel):
+    quality: Literal["preview", "balanced", "quality"] | None = None
 
 
 class SpaceCheckItem(BaseModel):

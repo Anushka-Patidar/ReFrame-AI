@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from app.services import image_generation as ig
 from app.services.media import UPLOADS_ROOT
@@ -81,6 +82,75 @@ def _add_mask_metrics(
             )
 
 
+def _sharpness_score(image: Image.Image) -> float:
+    gray = image.convert("L").resize((192, 192), Image.Resampling.LANCZOS)
+    edge = gray.filter(ImageFilter.FIND_EDGES)
+    arr = np.array(edge, dtype=np.float32)
+    return float(arr.std())
+
+
+def _add_sharpness_metric(
+    original: Image.Image,
+    candidate: Image.Image,
+    metrics: list[ValidationMetric],
+    violations: list[str],
+) -> None:
+    before = _sharpness_score(original)
+    after = _sharpness_score(candidate)
+    minimum = max(6.0, before * 0.55)
+    sharp_ok = after >= minimum
+    metrics.append(
+        ValidationMetric(
+            name="sharpness_after",
+            measured=True,
+            value=round(after, 3),
+            passed=sharp_ok,
+            detail=f"Expected sharpness >= {minimum:.2f} based on source edge detail.",
+        )
+    )
+    metrics.append(
+        ValidationMetric(
+            name="sharpness_before",
+            measured=True,
+            value=round(before, 3),
+            passed=True,
+            detail="Baseline source sharpness for development diagnostics.",
+        )
+    )
+    if not sharp_ok:
+        violations.append(f"Output is substantially blurrier than the source (sharpness={after:.2f}).")
+
+
+def _add_structure_condition_metric(
+    candidate: Image.Image,
+    structure,
+    metrics: list[ValidationMetric],
+) -> None:
+    condition_path = getattr(structure, "architecture_condition_path", None) if structure else None
+    if not condition_path:
+        return
+    with Image.open(UPLOADS_ROOT / condition_path) as m:
+        condition = m.convert("L")
+    candidate_edges = candidate.convert("L").resize(condition.size, Image.Resampling.LANCZOS).filter(
+        ImageFilter.FIND_EDGES
+    )
+    cond_arr = np.array(condition, dtype=np.float32)
+    edge_arr = np.array(candidate_edges, dtype=np.float32)
+    mask = cond_arr > 8.0
+    if mask.sum() < 100:
+        return
+    similarity = 1.0 - (np.abs(cond_arr[mask] - edge_arr[mask]).mean() / 255.0)
+    metrics.append(
+        ValidationMetric(
+            name="architecture_condition_similarity",
+            measured=True,
+            value=round(float(similarity), 4),
+            passed=True,
+            detail="Diagnostic only: candidate edge response on architecture-conditioned pixels.",
+        )
+    )
+
+
 def validate_design_result(
     original: Image.Image,
     candidate: Image.Image,
@@ -89,6 +159,8 @@ def validate_design_result(
     *,
     attempt: int = 1,
     segmentation=None,
+    structure=None,
+    mode: str = "automatic",
 ) -> DesignValidationReport:
     metrics: list[ValidationMetric] = []
     violations: list[str] = []
@@ -135,6 +207,8 @@ def validate_design_result(
 
     delta = ig.mean_abs_delta(original, candidate)
     min_delta = ig.min_delta_for_strength(brief.transformation_strength)
+    if mode == "precision":
+        min_delta = min(min_delta, 8.0)
     delta_ok = delta >= min_delta
     metrics.append(
         ValidationMetric(
@@ -161,6 +235,12 @@ def validate_design_result(
     )
     if not arch_ok:
         violations.append(f"Architecture preservation failed (structure={similarity:.2f}).")
+
+    _add_sharpness_metric(original, candidate, metrics, violations)
+    try:
+        _add_structure_condition_metric(candidate, structure, metrics)
+    except Exception:
+        logger.debug("Structure-conditioned similarity metric failed", exc_info=True)
 
     # --- Mask-aware regional metrics ---
     if segmentation and getattr(segmentation, "edit_mask_path", None):
@@ -214,7 +294,7 @@ def validate_design_result(
         constraint_results[f"palette:{item.target}"] = None
 
     measurable_failed = any(
-        metric.measured and metric.passed is False for metric in metrics
+        metric.measured and metric.passed == False for metric in metrics
     )
     overall_passed = (not measurable_failed) and (not identical)
 
@@ -254,3 +334,37 @@ def build_correction_instruction(
     if report.violations:
         parts.append("Prior violations: " + "; ".join(report.violations[:3]) + ".")
     return " ".join(parts)
+
+
+def build_retry_overrides(
+    report: DesignValidationReport,
+    *,
+    has_mask: bool,
+    current: Mapping[str, float | int | None] | None = None,
+) -> dict[str, float | int | None]:
+    """Deterministic retry settings keyed to measured failures."""
+    current = dict(current or {})
+    next_values: dict[str, float | int | None] = {
+        "strength_override": current.get("strength_override"),
+        "steps_override": current.get("steps_override"),
+        "structure_strength_override": current.get("structure_strength_override"),
+    }
+
+    text = " ".join(report.violations).lower()
+    if "visible change too small" in text or "inside-mask region barely changed" in text:
+        base = float(next_values["strength_override"] or (0.84 if has_mask else 0.68))
+        next_values["strength_override"] = min(0.98, base + 0.08)
+    if "outside-mask region changed too much" in text:
+        base = float(next_values["strength_override"] or 0.84)
+        next_values["strength_override"] = max(0.55, base - 0.08)
+    if "architecture" in text or "boundaries drifted" in text:
+        base = float(next_values["structure_strength_override"] or 0.72)
+        next_values["structure_strength_override"] = min(1.15, base + 0.12)
+        if not has_mask:
+            base_strength = float(next_values["strength_override"] or 0.68)
+            next_values["strength_override"] = max(0.52, base_strength - 0.04)
+    if "blurrier" in text or "photoreal" in text:
+        base_steps = int(next_values["steps_override"] or 20)
+        next_values["steps_override"] = min(32, base_steps + 4)
+
+    return next_values

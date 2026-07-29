@@ -3,9 +3,9 @@ import { api } from '../lib/api'
 
 const FALLBACK_STAGES = [
   'Analyzing your room',
-  'Preparing your design',
-  'Redesigning the interior',
-  'Refining your room',
+  'Preserving room structure',
+  'Applying your design direction',
+  'Finalizing your room',
 ] as const
 
 type Props = {

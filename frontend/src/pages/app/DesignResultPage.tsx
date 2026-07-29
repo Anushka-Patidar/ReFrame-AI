@@ -11,6 +11,8 @@ import { editorialImages } from '../../data/interiorImages'
 import { api } from '../../lib/api'
 import type { DesignRequirements, DesignVersion, Room } from '../../types/api'
 
+type QualityMode = 'preview' | 'balanced' | 'quality'
+
 export function DesignResultPage() {
   const navigate = useNavigate()
   const { roomId = '', designId = '' } = useParams()
@@ -23,6 +25,11 @@ export function DesignResultPage() {
   const [isRevising, setIsRevising] = useState(false)
   const [showRevise, setShowRevise] = useState(false)
   const [reviseDraft, setReviseDraft] = useState('')
+  const [qualityMode, setQualityMode] = useState<QualityMode>(() => {
+    if (typeof window === 'undefined') return 'balanced'
+    const stored = window.localStorage.getItem('reframe-quality-mode')
+    return stored === 'preview' || stored === 'quality' ? stored : 'balanced'
+  })
 
   useEffect(() => {
     if (!token) return
@@ -66,7 +73,8 @@ export function DesignResultPage() {
     setError('')
     setIsGenerating(true)
     try {
-      const nextDesign = await api.generateDesign(token, roomId)
+      window.localStorage.setItem('reframe-quality-mode', qualityMode)
+      const nextDesign = await api.generateDesign(token, roomId, qualityMode)
       if (
         room?.original_image_url &&
         nextDesign.image_url &&
@@ -294,6 +302,30 @@ export function DesignResultPage() {
           </SurfaceCard>
 
           <SurfaceCard className="space-y-3">
+            <div className="rounded-[1.3rem] border border-sand-200 bg-sand-25 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-ink-500">Next Generation</p>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {[
+                  ['preview', 'Quick'],
+                  ['balanced', 'Balanced'],
+                  ['quality', 'Best'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setQualityMode(value as QualityMode)}
+                    disabled={isGenerating || isRevising}
+                    className={`rounded-full border px-3 py-2 text-xs font-medium transition ${
+                      qualityMode === value
+                        ? 'border-ink-900 bg-ink-900 text-white'
+                        : 'border-sand-200 bg-white text-ink-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <ActionButton
               label="Discuss Changes"
               icon={<MessageSquareMore className="h-4 w-4" />}

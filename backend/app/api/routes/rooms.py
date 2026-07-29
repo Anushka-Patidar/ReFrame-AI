@@ -15,6 +15,7 @@ from app.models.collections import (
 from app.schemas.common import ApiMessage
 from app.schemas.room import (
     ChatMessage,
+    GenerationRequest,
     DesignRequirements,
     DesignVersionRead,
     RoomCreate,
@@ -64,6 +65,7 @@ async def _run_image_generation(
     requirements: dict,
     revision_note: str | None = None,
     memory_document: dict | None = None,
+    requested_profile: str | None = None,
 ) -> tuple[str, str, dict]:
     try:
         return await generate_design_image(
@@ -71,6 +73,7 @@ async def _run_image_generation(
             requirements,
             revision_note,
             memory_document=memory_document,
+            requested_profile=requested_profile,
         )
     except RoomImageMissingError as exc:
         raise HTTPException(
@@ -592,6 +595,7 @@ async def space_check(
 async def generate_design(
     room_id: str,
     request: Request,
+    payload: GenerationRequest | None = None,
     current_user: dict = Depends(get_current_user),
 ) -> DesignVersionRead:
     db = get_database()
@@ -610,6 +614,7 @@ async def generate_design(
         room,
         requirements,
         memory_document=memory_document,
+        requested_profile=payload.quality if payload else None,
     )
     image_url = _public_media_url(request, relative_path)
 

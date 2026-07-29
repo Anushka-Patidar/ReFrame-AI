@@ -152,8 +152,16 @@ export const api = {
     }),
   getSpaceCheck: (token: string, roomId: string) =>
     request<SpaceCheck>(`/rooms/${roomId}/space-check`, { method: 'POST', token }),
-  generateDesign: (token: string, roomId: string) =>
-    request<DesignVersion>(`/rooms/${roomId}/generate`, { method: 'POST', token }),
+  generateDesign: (
+    token: string,
+    roomId: string,
+    quality?: 'preview' | 'balanced' | 'quality',
+  ) =>
+    request<DesignVersion>(`/rooms/${roomId}/generate`, {
+      method: 'POST',
+      token,
+      body: quality ? { quality } : {},
+    }),
   listDesigns: (token: string, roomId: string) =>
     request<DesignVersion[]>(`/rooms/${roomId}/designs`, { token }),
   reviseDesign: (

@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     local_ai_profile: str = "auto"
     # Inpainting model (used when edit masks exist).
     local_inpainting_model_id: str = "runwayml/stable-diffusion-inpainting"
+    # Single ControlNet model for architecture-preserving SD1.5 generation.
+    local_controlnet_canny_model_id: str = "lllyasviel/control_v11p_sd15_canny"
     # Bounded generate → validate → retry attempts inside the pipeline.
     local_max_retries: int = 2
     # Optional manual overrides (0 = use profile defaults).
@@ -27,6 +29,7 @@ class Settings(BaseSettings):
     local_image_height: int = 0
     local_inference_steps: int = 0
     local_guidance_scale: float = 0.0
+    local_structure_strength: float = 0.0
 
     # Development-only: validate and log region-mask / structure pipeline.
     debug_mask_pipeline: bool = False

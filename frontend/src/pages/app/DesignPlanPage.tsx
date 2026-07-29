@@ -16,6 +16,7 @@ const requirementKeys: Array<keyof Pick<
 >> = ['keep', 'remove', 'add', 'colours', 'avoid', 'notes']
 
 type RequirementListKey = (typeof requirementKeys)[number]
+type QualityMode = 'preview' | 'balanced' | 'quality'
 
 function parseListDraft(value: string): string[] {
   return value
@@ -42,6 +43,11 @@ export function DesignPlanPage() {
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [qualityMode, setQualityMode] = useState<QualityMode>(() => {
+    if (typeof window === 'undefined') return 'balanced'
+    const stored = window.localStorage.getItem('reframe-quality-mode')
+    return stored === 'preview' || stored === 'quality' ? stored : 'balanced'
+  })
 
   useEffect(() => {
     if (!token) return
@@ -127,7 +133,8 @@ export function DesignPlanPage() {
     try {
       setRequirements(payload)
       await api.updateRequirements(token, roomId, payload)
-      const design = await api.generateDesign(token, roomId)
+      window.localStorage.setItem('reframe-quality-mode', qualityMode)
+      const design = await api.generateDesign(token, roomId, qualityMode)
       navigate(`/app/design-studio/${roomId}/result/${design.id}`)
     } catch (generateError) {
       setError(
@@ -255,6 +262,34 @@ export function DesignPlanPage() {
           </SurfaceCard>
 
           <SurfaceCard className="space-y-4">
+            <div className="rounded-[1.4rem] border border-sand-200 bg-sand-25 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-ink-500">Generation Mode</p>
+              <div className="mt-3 grid gap-2">
+                {[
+                  ['preview', 'Quick Preview'],
+                  ['balanced', 'Balanced'],
+                  ['quality', 'Best Quality'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setQualityMode(value as QualityMode)}
+                    disabled={isGenerating}
+                    className={`rounded-[1rem] border px-3 py-2 text-left text-sm transition ${
+                      qualityMode === value
+                        ? 'border-ink-900 bg-ink-900 text-white'
+                        : 'border-sand-200 bg-white text-ink-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-3 text-xs leading-6 text-ink-500">
+                Quick Preview uses the fast lightweight path. Balanced and Best Quality use the
+                architecture-preserving SD1.5 workflow.
+              </p>
+            </div>
             <button
               type="button"
               onClick={saveRequirements}
