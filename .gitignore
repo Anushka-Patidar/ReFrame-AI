@@ -1,0 +1,26 @@
+# Dependencies / build
+frontend/node_modules/
+frontend/dist/
+backend/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.pytest_cache/
+
+# Secrets and local env
+.env
+**/.env
+!**/.env.example
+
+# Uploaded / generated media (local only)
+backend/uploads/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Hugging Face / model caches (never commit)
+.cache/
+**/huggingface/

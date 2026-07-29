@@ -1,0 +1,22 @@
+export const editorialImages = {
+  hero:
+    'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80',
+  transformationBefore:
+    'https://images.unsplash.com/photo-1484154218962-a197022b5858?auto=format&fit=crop&w=1200&q=80',
+  transformationAfter:
+    'https://images.unsplash.com/photo-1494526585095-c41746248156?auto=format&fit=crop&w=1200&q=80',
+  bedroom:
+    'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=80',
+  living:
+    'https://images.unsplash.com/photo-1505409859467-3a796fd5798e?auto=format&fit=crop&w=900&q=80',
+  kitchen:
+    'https://images.unsplash.com/photo-1484154218962-a197022b5858?auto=format&fit=crop&w=900&q=80',
+  study:
+    'https://images.unsplash.com/photo-1449247709967-d4461a6a6103?auto=format&fit=crop&w=900&q=80',
+  inspirationA:
+    'https://images.unsplash.com/photo-1494526585095-c41746248156?auto=format&fit=crop&w=900&q=80',
+  inspirationB:
+    'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=80',
+  inspirationC:
+    'https://images.unsplash.com/photo-1505409859467-3a796fd5798e?auto=format&fit=crop&w=900&q=80',
+}
