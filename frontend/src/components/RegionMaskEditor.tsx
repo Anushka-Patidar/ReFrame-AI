@@ -364,7 +364,7 @@ export function RegionMaskEditor({
       {
         id,
         action: activeAction,
-        label: activeLabel.trim()[:80],
+        label: activeLabel.trim().slice(0, 80),
         maskCanvas: clone,
       },
     ])

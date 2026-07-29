@@ -29,6 +29,7 @@ from app.services.pipeline.types import (
 from app.services.pipeline.types import ObjectMask
 from app.services.providers import GenerationResult
 from app.services.providers.local_diffusion import get_local_provider
+from app.services.providers.local_inpainting import get_inpainting_provider
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,18 @@ def run_redesign_pipeline(
     )
     structure = prepare_structural_signals(source_image, compute_lightweight_edges=True)
 
-    provider = get_local_provider()
+    # Choose provider: inpainting when we have editable masks, else img2img preview.
+    has_edit_mask = bool(segmentation.edit_mask_path)
+    if has_edit_mask:
+        try:
+            provider = get_inpainting_provider()
+            logger.info("REFRAME_PIPELINE using inpainting provider (edit mask available)")
+        except Exception:
+            logger.warning("Inpainting provider unavailable; falling back to img2img")
+            provider = get_local_provider()
+    else:
+        provider = get_local_provider()
+        logger.info("REFRAME_PIPELINE using img2img provider (no edit mask)")
 
     if settings.debug_mask_pipeline:
         try:
@@ -207,6 +219,7 @@ def run_redesign_pipeline(
             active_brief,
             constraints,
             attempt=attempt,
+            segmentation=segmentation,
         )
         last_report = report
         logger.info(

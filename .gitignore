@@ -21,6 +21,11 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Hugging Face / model caches (never commit)
+# Hugging Face / model caches / weights (never commit)
 .cache/
 **/huggingface/
+**/*.ckpt
+**/*.safetensors
+**/model_cache/
+**/models/
+**/.huggingface/

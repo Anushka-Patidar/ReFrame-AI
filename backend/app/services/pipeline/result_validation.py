@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
+import numpy as np
 from PIL import Image
 
 from app.services import image_generation as ig
+from app.services.media import UPLOADS_ROOT
+
+logger = logging.getLogger(__name__)
 from app.services.design_brief import DesignBrief
 from app.services.pipeline.types import (
     ConstraintKind,
@@ -14,6 +20,67 @@ from app.services.pipeline.types import (
 )
 
 
+def _add_mask_metrics(
+    original: Image.Image,
+    candidate: Image.Image,
+    segmentation,
+    metrics: list,
+    violations: list[str],
+) -> None:
+    """Compute outside-mask similarity and inside-mask difference."""
+    edit_path = UPLOADS_ROOT / segmentation.edit_mask_path
+    with Image.open(edit_path) as m:
+        mask_l = m.convert("RGBA").split()[-1]
+    mask_l = mask_l.point(lambda p: 255 if p > 0 else 0)
+
+    orig_resized = original.convert("RGB").resize(candidate.size, Image.Resampling.LANCZOS)
+    mask_resized = mask_l.resize(candidate.size, Image.Resampling.NEAREST)
+
+    orig_arr = np.array(orig_resized, dtype=np.float32)
+    cand_arr = np.array(candidate.convert("RGB"), dtype=np.float32)
+    mask_arr = np.array(mask_resized, dtype=np.float32) / 255.0
+    mask_3 = np.stack([mask_arr] * 3, axis=-1)
+
+    # Outside mask: should be VERY similar to original (preserved regions).
+    outside_weight = 1.0 - mask_3
+    outside_count = outside_weight.sum() / 3.0
+    if outside_count > 100:
+        outside_diff = np.abs(orig_arr - cand_arr) * outside_weight
+        outside_mae = outside_diff.sum() / (outside_count * 3.0)
+        outside_similarity = max(0.0, 1.0 - outside_mae / 255.0)
+        outside_ok = outside_similarity >= 0.85
+        metrics.append(ValidationMetric(
+            name="outside_mask_similarity",
+            measured=True,
+            value=round(outside_similarity, 4),
+            passed=outside_ok,
+            detail="Regions outside the edit mask should remain close to the original.",
+        ))
+        if not outside_ok:
+            violations.append(
+                f"Outside-mask region changed too much (similarity={outside_similarity:.3f}, need >=0.85)."
+            )
+
+    # Inside mask: should have meaningful change.
+    inside_count = mask_3.sum() / 3.0
+    if inside_count > 100:
+        inside_diff = np.abs(orig_arr - cand_arr) * mask_3
+        inside_mae = inside_diff.sum() / (inside_count * 3.0)
+        inside_change = inside_mae / 255.0
+        inside_ok = inside_change >= 0.03
+        metrics.append(ValidationMetric(
+            name="inside_mask_difference",
+            measured=True,
+            value=round(inside_change, 4),
+            passed=inside_ok,
+            detail="Regions inside the edit mask should change meaningfully.",
+        ))
+        if not inside_ok:
+            violations.append(
+                f"Inside-mask region barely changed (change={inside_change:.3f}, need >=0.03)."
+            )
+
+
 def validate_design_result(
     original: Image.Image,
     candidate: Image.Image,
@@ -21,6 +88,7 @@ def validate_design_result(
     constraints: ConstraintSet,
     *,
     attempt: int = 1,
+    segmentation=None,
 ) -> DesignValidationReport:
     metrics: list[ValidationMetric] = []
     violations: list[str] = []
@@ -93,6 +161,13 @@ def validate_design_result(
     )
     if not arch_ok:
         violations.append(f"Architecture preservation failed (structure={similarity:.2f}).")
+
+    # --- Mask-aware regional metrics ---
+    if segmentation and getattr(segmentation, "edit_mask_path", None):
+        try:
+            _add_mask_metrics(original, candidate, segmentation, metrics, violations)
+        except Exception:
+            pass
 
     # --- Constraint compliance: only mark measured when we have a real checker ---
     for item in constraints.by_kind(ConstraintKind.ARCHITECTURE_LOCKED):

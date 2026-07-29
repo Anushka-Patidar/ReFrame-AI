@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     local_diffusion_model: str = "segmind/tiny-sd"
     # auto | low_memory | balanced | high
     local_ai_profile: str = "auto"
+    # Inpainting model (used when edit masks exist).
+    local_inpainting_model_id: str = "runwayml/stable-diffusion-inpainting"
     # Bounded generate → validate → retry attempts inside the pipeline.
     local_max_retries: int = 2
     # Optional manual overrides (0 = use profile defaults).

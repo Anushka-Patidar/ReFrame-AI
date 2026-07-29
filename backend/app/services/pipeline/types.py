@@ -114,11 +114,11 @@ class ObjectMask:
     """Future segmentation artifact. No model required to define the schema."""
 
     object_id: str
+    label: str
     # User intent for this region mask:
     # - KEEP: protected region
     # - CHANGE / REMOVE: editable regions
     action: str = "CHANGE"
-    label: str
     bounding_box: tuple[float, float, float, float] | None = None
     # Mask stored as path or deferred binary — never invent pixel data.
     mask_path: str | None = None
