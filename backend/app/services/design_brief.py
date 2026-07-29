@@ -18,12 +18,15 @@ class DesignBrief:
     keep_objects: list[str] = field(default_factory=list)
     remove_objects: list[str] = field(default_factory=list)
     replace_or_add: list[str] = field(default_factory=list)
+    change_targets: list[str] = field(default_factory=list)
     palette: list[str] = field(default_factory=list)
+    budget: int | None = None
     transformation_strength: str = "balanced"  # subtle | balanced | strong
     realism: str = "photorealistic"
     revision_note: str | None = None
     materials: list[str] = field(default_factory=list)
     mood: str = ""
+    memory_hints: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -92,7 +95,11 @@ def build_design_brief(
     keep_objects = _clean_list(requirements.get("keep"))
     remove_objects = _clean_list(requirements.get("remove"))
     replace_or_add = _clean_list(requirements.get("add"))
+    change_targets = _clean_list(requirements.get("change"))
     palette = _clean_list(requirements.get("colours") or profile["palette"][:4], limit=5)
+    budget_raw = requirements.get("budget")
+    budget = int(budget_raw) if isinstance(budget_raw, (int, float)) and budget_raw > 0 else None
+    memory_hints = _clean_list(requirements.get("memory_hints"), limit=12)
 
     remove_keys = {item.lower() for item in remove_objects}
     keep_objects = [item for item in keep_objects if item.lower() not in remove_keys]
@@ -117,12 +124,15 @@ def build_design_brief(
         keep_objects=keep_objects,
         remove_objects=remove_objects,
         replace_or_add=replace_or_add,
+        change_targets=change_targets,
         palette=palette,
+        budget=budget,
         transformation_strength=strength,
         realism="photorealistic",
         revision_note=revision_note,
         materials=list(profile.get("materials") or [])[:4],
         mood=str(profile.get("mood") or ""),
+        memory_hints=memory_hints,
     )
 
 
@@ -177,25 +187,45 @@ def build_edit_prompt(brief: DesignBrief) -> str:
 
 
 def build_local_clip_prompt(brief: DesignBrief) -> str:
-    """CLIP-safe prompt (~77 tokens). Local SD models truncate longer text."""
-    keep = ", ".join(brief.keep_objects[:3]) if brief.keep_objects else "architecture"
+    """Concise CLIP-friendly photoreal prompt (front-loaded; CLIP truncates ~77 tokens)."""
+    keep = ", ".join(brief.keep_objects[:2]) if brief.keep_objects else "door"
     remove = ", ".join(brief.remove_objects[:3]) if brief.remove_objects else "old furniture"
     add = ", ".join(brief.replace_or_add[:3]) if brief.replace_or_add else "new furniture"
     palette = ", ".join(brief.palette[:3]) if brief.palette else "warm neutrals"
-    revision = f" {brief.revision_note}." if brief.revision_note else ""
-    # Keep under CLIP's 77-token limit; front-load the redesign intent.
+    # Structure words first; style + redesign next; KEEP must not mean keep all furniture.
     return (
-        f"photorealistic {brief.target_style} {brief.room_type.lower()} interior redesign, "
-        f"same room layout, keep {keep}, remove {remove}, add {add}, "
-        f"palette {palette}, realistic furniture lighting shadows{revision}"
+        f"photorealistic professional interior photograph of the SAME {brief.room_type.lower()}, "
+        f"{brief.target_style} interior design, preserve original room geometry and camera, "
+        f"keep {keep}, remove {remove}, add {add}, palette {palette}, "
+        f"realistic wood fabric materials, architectural lighting, sharp detail"
     )
 
 
 def build_local_negative_prompt(brief: DesignBrief) -> str:
-    remove = ", ".join(brief.remove_objects[:4]) if brief.remove_objects else "old sofa"
+    """Dedicated negative prompt — compact, artifact-focused."""
+    _ = brief
     return (
-        f"{remove}, unchanged original room, blurry, abstract, cartoon, painting, "
-        "people, faces, text, watermark, warped walls, extra windows, low quality"
+        "blurry, low resolution, low detail, warped furniture, deformed furniture, "
+        "crooked walls, distorted perspective, melted objects, duplicate furniture, "
+        "floating objects, unrealistic proportions, bad architecture, warped television, "
+        "distorted cabinetry, plastic textures, oversaturated, cartoon, illustration, "
+        "painting, CGI, unrealistic lighting, people, faces, text, watermark"
+    )
+
+
+def build_edit_requirements_block(brief: DesignBrief) -> str:
+    """Human/dev log block separating KEEP / REMOVE / ADD (not fed as one giant prompt)."""
+    keep = ", ".join(brief.keep_objects) if brief.keep_objects else "(architecture only)"
+    remove = ", ".join(brief.remove_objects) if brief.remove_objects else "(none)"
+    add = ", ".join(brief.replace_or_add) if brief.replace_or_add else "(style furniture)"
+    change = ", ".join(brief.change_targets) if brief.change_targets else "(as needed)"
+    return (
+        f"KEEP: {keep}\n"
+        f"REMOVE: {remove}\n"
+        f"CHANGE: {change}\n"
+        f"ADD/REPLACE: {add}\n"
+        f"STYLE: {brief.target_style}\n"
+        f"PALETTE: {', '.join(brief.palette) if brief.palette else 'n/a'}"
     )
 
 

@@ -18,11 +18,17 @@ class Settings(BaseSettings):
     local_diffusion_model: str = "segmind/tiny-sd"
     # auto | low_memory | balanced | high
     local_ai_profile: str = "auto"
+    # Bounded generate → validate → retry attempts inside the pipeline.
+    local_max_retries: int = 2
     # Optional manual overrides (0 = use profile defaults).
     local_image_width: int = 0
     local_image_height: int = 0
     local_inference_steps: int = 0
     local_guidance_scale: float = 0.0
+
+    # Development-only: validate and log region-mask / structure pipeline.
+    debug_mask_pipeline: bool = False
+    debug_mask_visual_preview: bool = False
 
     # Optional chat improvements only (not required for redesign).
     anthropic_api_key: str | None = None

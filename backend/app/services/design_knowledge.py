@@ -219,6 +219,7 @@ def normalize_requirements(
     keep = _unique(list(requirements.get("keep") or []))
     remove = _unique(list(requirements.get("remove") or []))
     add = _unique(list(requirements.get("add") or []))
+    change = _unique(list(requirements.get("change") or []))
     colours = _unique(list(requirements.get("colours") or []))
     avoid = _unique(list(requirements.get("avoid") or []))
     notes = _unique(list(requirements.get("notes") or []))[:4]
@@ -254,6 +255,7 @@ def normalize_requirements(
         "keep": keep[:8],
         "remove": remove[:8],
         "add": add[:8],
+        "change": change[:8],
         "colours": colours[:5],
         "avoid": avoid[:8],
         "notes": notes,

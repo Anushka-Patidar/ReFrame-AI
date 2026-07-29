@@ -7,6 +7,7 @@ import { ContractorBriefsPage } from './pages/app/ContractorBriefsPage'
 import { DashboardPage } from './pages/app/DashboardPage'
 import { DesignChatPage } from './pages/app/DesignChatPage'
 import { DesignPlanPage } from './pages/app/DesignPlanPage'
+import { RoomMaskEditorPage } from './pages/app/RoomMaskEditorPage'
 import { DesignResultPage } from './pages/app/DesignResultPage'
 import { DesignScorePage } from './pages/app/DesignScorePage'
 import { DesignStudioPage } from './pages/app/DesignStudioPage'
@@ -58,6 +59,7 @@ function App() {
         <Route path="design-studio" element={<DesignStudioPage />} />
         <Route path="design-studio/:roomId/chat" element={<DesignChatPage />} />
         <Route path="design-studio/:roomId/plan" element={<DesignPlanPage />} />
+        <Route path="design-studio/:roomId/mark-elements" element={<RoomMaskEditorPage />} />
         <Route
           path="design-studio/:roomId/result/:designId"
           element={<DesignResultPage />}

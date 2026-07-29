@@ -53,8 +53,12 @@ class DesignVersionRead(BaseModel):
     note: str
     image_url: str | None = None
     engine: str | None = None
+    pipeline_metadata: dict | None = None
+    validation: dict | None = None
     is_finalized: bool = False
     created_at: datetime
+
+    model_config = {"extra": "ignore"}
 
 
 class RoomRead(BaseModel):

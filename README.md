@@ -57,10 +57,9 @@ uvicorn app.main:app --reload
 
 Make sure MongoDB is running locally at `mongodb://localhost:27017`, or update `backend/.env` with your own connection string before starting the API.
 
-Local generation settings (see `backend/.env.example`):
+## AI architecture
 
-```env
-IMAGE_PROVIDER=local
-LOCAL_MODEL_ID=segmind/tiny-sd
-LOCAL_AI_PROFILE=auto
-```
+See `docs/ai-architecture.md` for the modular interior-design pipeline
+(RoomUnderstanding → DesignBrief → Constraints → ImageEditing → Validation → Memory).
+
+Future optional LoRA fine-tuning notes: `docs/future-lora-finetuning.md`.

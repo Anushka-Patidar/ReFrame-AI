@@ -1,9 +1,17 @@
 from bson import ObjectId
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 
 from app.api.deps import get_current_user
 from app.db.database import get_database
-from app.models.collections import DESIGN_CONVERSATIONS, DESIGN_REQUIREMENTS, DESIGN_VERSIONS, ROOMS
+from app.models.collections import (
+    DESIGN_CONVERSATIONS,
+    DESIGN_MEMORY,
+    DESIGN_REQUIREMENTS,
+    DESIGN_VERSIONS,
+    GENERATION_EVENTS,
+    ROOMS,
+    REGION_CONSTRAINTS,
+)
 from app.schemas.common import ApiMessage
 from app.schemas.room import (
     ChatMessage,
@@ -14,6 +22,7 @@ from app.schemas.room import (
     SpaceCheckResponse,
     SpaceCheckItem,
 )
+from app.schemas.region_constraints import RegionConstraintRead, RegionAction
 from app.services.design_brief import build_design_brief
 from app.services.design_knowledge import normalize_requirements, resolve_style
 from app.services.image_generation import (
@@ -23,7 +32,7 @@ from app.services.image_generation import (
     generate_design_image,
 )
 from app.services.llm_design_agent import run_design_agent
-from app.services.media import save_room_upload
+from app.services.media import UPLOADS_ROOT, save_mask_upload, save_room_upload
 from app.services.mongo import object_id, serialize_id, utc_now
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
@@ -54,9 +63,15 @@ async def _run_image_generation(
     room: dict,
     requirements: dict,
     revision_note: str | None = None,
-) -> tuple[str, str]:
+    memory_document: dict | None = None,
+) -> tuple[str, str, dict]:
     try:
-        return await generate_design_image(room, requirements, revision_note)
+        return await generate_design_image(
+            room,
+            requirements,
+            revision_note,
+            memory_document=memory_document,
+        )
     except RoomImageMissingError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,6 +94,58 @@ async def _run_image_generation(
         ) from exc
 
 
+async def _load_design_memory(user_id: ObjectId) -> dict | None:
+    return await get_database()[DESIGN_MEMORY].find_one({"user_id": user_id})
+
+
+async def _upsert_design_memory(user_id: ObjectId, memory_payload: dict) -> None:
+    await get_database()[DESIGN_MEMORY].update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "user_id": user_id,
+                "design_memory": memory_payload,
+                "updated_at": utc_now(),
+            },
+            "$setOnInsert": {"created_at": utc_now()},
+        },
+        upsert=True,
+    )
+
+
+async def _persist_generation_event(
+    *,
+    user_id: ObjectId,
+    room_id: ObjectId,
+    design_version_id: ObjectId,
+    metadata: dict,
+) -> None:
+    """Store generation audit metadata. training_consent stays False by default."""
+    await get_database()[GENERATION_EVENTS].insert_one(
+        {
+            "user_id": user_id,
+            "room_id": room_id,
+            "design_version_id": design_version_id,
+            "generation_id": metadata.get("generation_id"),
+            "source_image_url": metadata.get("source_image_url"),
+            "design_brief": metadata.get("design_brief"),
+            "constraints": metadata.get("constraints"),
+            "generated_image_meta": {
+                "model": metadata.get("model"),
+                "model_configuration": metadata.get("model_configuration"),
+                "seed": metadata.get("seed"),
+                "provider": metadata.get("provider"),
+                "attempts": metadata.get("attempts"),
+            },
+            "validation": metadata.get("validation"),
+            "user_accepted": metadata.get("user_accepted"),
+            "user_rejected": metadata.get("user_rejected"),
+            "user_feedback": metadata.get("user_feedback"),
+            "training_consent": bool(metadata.get("training_consent", False)),
+            "created_at": utc_now(),
+        }
+    )
+
 def _public_media_url(request: Request, relative_path: str) -> str:
     return str(request.base_url).rstrip("/") + f"/media/{relative_path}"
 
@@ -93,6 +160,7 @@ async def _stored_requirements(room: dict) -> dict:
         "keep": (document or {}).get("keep", []),
         "remove": (document or {}).get("remove", []),
         "add": (document or {}).get("add", []),
+        "change": (document or {}).get("change", []),
         "colours": (document or {}).get("colours", []),
         "avoid": (document or {}).get("avoid", []),
         "notes": (document or {}).get("notes", []),
@@ -358,6 +426,114 @@ async def update_requirements(
     return ApiMessage(message="Design requirements updated.")
 
 
+@router.get("/{room_id}/region-constraints", response_model=list[RegionConstraintRead])
+async def list_region_constraints(
+    room_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> list[RegionConstraintRead]:
+    room_object_id = object_id(room_id)
+    cursor = get_database()[REGION_CONSTRAINTS].find(
+        {"room_id": room_object_id, "user_id": ObjectId(current_user["id"])}
+    )
+    results: list[RegionConstraintRead] = []
+    async for doc in cursor:
+        serialized = serialize_id(doc)
+        if serialized is None:
+            continue
+        mask_path = str(serialized.get("mask_path") or "")
+        mask_url = _public_media_url(request, mask_path)
+        results.append(
+            RegionConstraintRead(
+                id=str(serialized["id"]),
+                action=str(serialized.get("action") or "CHANGE").upper(),  # type: ignore[arg-type]
+                label=str(serialized.get("label") or ""),
+                mask_url=mask_url,
+                image_width=int(serialized.get("image_width") or 0),
+                image_height=int(serialized.get("image_height") or 0),
+                created_at=serialized.get("created_at"),  # type: ignore[arg-type]
+            )
+        )
+    return results
+
+
+@router.post("/{room_id}/region-constraints", response_model=RegionConstraintRead)
+async def create_region_constraint(
+    room_id: str,
+    request: Request,
+    action: RegionAction = Form(...),
+    label: str = Form(...),
+    image_width: int = Form(...),
+    image_height: int = Form(...),
+    mask: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+) -> RegionConstraintRead:
+    room_object_id = object_id(room_id)
+    user_object_id = ObjectId(current_user["id"])
+
+    room = await get_database()[ROOMS].find_one({"_id": room_object_id, "user_id": user_object_id})
+    if room is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
+
+    mask_path = await save_mask_upload(mask, room_id=room_id)
+    mask_url = _public_media_url(request, mask_path)
+    now = utc_now()
+
+    doc = {
+        "user_id": user_object_id,
+        "room_id": room_object_id,
+        "action": action,
+        "label": label.strip()[:80],
+        "mask_path": mask_path,
+        "image_width": int(image_width),
+        "image_height": int(image_height),
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await get_database()[REGION_CONSTRAINTS].insert_one(doc)
+    return RegionConstraintRead(
+        id=str(result.inserted_id),
+        action=action,
+        label=doc["label"],
+        mask_url=mask_url,
+        image_width=doc["image_width"],
+        image_height=doc["image_height"],
+        created_at=doc["created_at"],
+    )
+
+
+@router.delete("/{room_id}/region-constraints/{constraint_id}", response_model=ApiMessage)
+async def delete_region_constraint(
+    room_id: str,
+    constraint_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> ApiMessage:
+    room_object_id = object_id(room_id)
+    constraint_object_id = object_id(constraint_id)
+    user_object_id = ObjectId(current_user["id"])
+
+    db = get_database()
+    doc = await db[REGION_CONSTRAINTS].find_one(
+        {"_id": constraint_object_id, "room_id": room_object_id, "user_id": user_object_id}
+    )
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Region constraint not found.")
+
+    await db[REGION_CONSTRAINTS].delete_one(
+        {"_id": constraint_object_id, "room_id": room_object_id, "user_id": user_object_id}
+    )
+
+    # Best-effort local cleanup.
+    try:
+        mask_path = str(doc.get("mask_path") or "")
+        if mask_path:
+            (UPLOADS_ROOT / mask_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return ApiMessage(message="Region constraint deleted.")
+
+
 @router.post("/{room_id}/space-check", response_model=SpaceCheckResponse)
 async def space_check(
     room_id: str,
@@ -428,8 +604,13 @@ async def generate_design(
             detail="Room not found.",
         )
     requirements = await _stored_requirements(room)
+    memory_document = await _load_design_memory(ObjectId(current_user["id"]))
 
-    relative_path, engine = await _run_image_generation(room, requirements)
+    relative_path, engine, metadata = await _run_image_generation(
+        room,
+        requirements,
+        memory_document=memory_document,
+    )
     image_url = _public_media_url(request, relative_path)
 
     count = await db[DESIGN_VERSIONS].count_documents({"room_id": room["_id"]})
@@ -446,10 +627,29 @@ async def generate_design(
         "note": _build_generation_note(room, requirements, engine),
         "image_url": image_url,
         "engine": engine,
+        "pipeline_metadata": metadata,
+        "validation": (metadata or {}).get("validation"),
         "is_finalized": False,
         "created_at": utc_now(),
     }
     result = await db[DESIGN_VERSIONS].insert_one(version_document)
+    await _persist_generation_event(
+        user_id=ObjectId(current_user["id"]),
+        room_id=room["_id"],
+        design_version_id=result.inserted_id,
+        metadata=metadata,
+    )
+    if metadata.get("design_brief"):
+        from app.services.pipeline.design_memory import (
+            memory_from_document,
+            merge_memory_from_requirements,
+        )
+
+        memory = merge_memory_from_requirements(
+            memory_from_document(memory_document),
+            requirements,
+        )
+        await _upsert_design_memory(ObjectId(current_user["id"]), memory.to_dict())
     await db[ROOMS].update_one(
         {"_id": room["_id"]},
         {"$set": {"status": "Generated", "updated_at": utc_now()}},
@@ -552,10 +752,12 @@ async def revise_design(
         upsert=True,
     )
 
-    relative_path, engine = await _run_image_generation(
+    memory_document = await _load_design_memory(ObjectId(current_user["id"]))
+    relative_path, engine, metadata = await _run_image_generation(
         room,
         requirements,
         revision_note=message.content,
+        memory_document=memory_document,
     )
     image_url = _public_media_url(request, relative_path)
 
@@ -573,10 +775,28 @@ async def revise_design(
             ),
             "image_url": image_url,
             "engine": engine,
+            "pipeline_metadata": metadata,
+            "validation": (metadata or {}).get("validation"),
             "is_finalized": False,
             "created_at": utc_now(),
         }
     )
+    await _persist_generation_event(
+        user_id=ObjectId(current_user["id"]),
+        room_id=room["_id"],
+        design_version_id=result.inserted_id,
+        metadata=metadata,
+    )
+    from app.services.pipeline.design_memory import (
+        memory_from_document,
+        merge_memory_from_requirements,
+    )
+
+    memory = merge_memory_from_requirements(
+        memory_from_document(memory_document),
+        requirements,
+    )
+    await _upsert_design_memory(ObjectId(current_user["id"]), memory.to_dict())
     created = serialize_id(await db[DESIGN_VERSIONS].find_one({"_id": result.inserted_id}))
     if created is None:
         raise HTTPException(

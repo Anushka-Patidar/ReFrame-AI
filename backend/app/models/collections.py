@@ -9,3 +9,7 @@ DESIGN_SCORES = "design_scores"
 CONTRACTOR_BRIEFS = "contractor_briefs"
 PROFESSIONALS = "professionals"
 SHARED_BRIEFS = "shared_briefs"
+# Non-sensitive preference memory and generation audit trail (opt-in training later).
+DESIGN_MEMORY = "design_memory"
+GENERATION_EVENTS = "generation_events"
+REGION_CONSTRAINTS = "region_constraints"

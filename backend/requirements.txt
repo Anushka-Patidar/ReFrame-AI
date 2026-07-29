@@ -8,7 +8,7 @@ passlib==1.7.4
 python-multipart==0.0.20
 pillow==11.3.0
 httpx==0.28.1
-opencv-python-headless>=4.8.0
+opencv-python-headless>=4.8.0,<5
 numpy>=1.26.0
 # Local free image-to-image redesign (CPU-friendly tiny SD)
 torch>=2.2.0

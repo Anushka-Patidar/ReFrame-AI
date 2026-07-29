@@ -19,31 +19,47 @@ class LocalAiProfile:
     steps: int
     guidance: float
     display_max_side: int
+    # Design-transform strength (appearance). Structure is NOT solved by this alone.
+    design_strength: float
+    scheduler: str  # ddim | pndm | euler | default
+    mild_sharpen: bool = True
 
 
+# Public profile names requested by product + backwards-compatible aliases.
 PROFILES: dict[str, LocalAiProfile] = {
-    "low_memory": LocalAiProfile(
-        name="low_memory",
+    "preview": LocalAiProfile(
+        name="preview",
         max_side=320,
         steps=12,
         guidance=6.5,
-        display_max_side=1024,
+        display_max_side=960,
+        design_strength=0.50,
+        scheduler="ddim",
     ),
     "balanced": LocalAiProfile(
         name="balanced",
         max_side=384,
-        steps=12,
+        steps=16,
         guidance=7.0,
         display_max_side=1200,
+        design_strength=0.55,
+        scheduler="ddim",
     ),
-    "high": LocalAiProfile(
-        name="high",
-        max_side=512,
-        steps=16,
-        guidance=7.5,
-        display_max_side=1400,
+    "quality": LocalAiProfile(
+        name="quality",
+        max_side=448,
+        steps=20,
+        guidance=7.25,
+        display_max_side=1280,
+        # Slightly lower strength at higher res to reduce melted furniture.
+        design_strength=0.52,
+        scheduler="ddim",
     ),
 }
+
+# Aliases for older env values.
+PROFILES["low_memory"] = PROFILES["preview"]
+PROFILES["high"] = PROFILES["quality"]
 
 
 @dataclass
@@ -86,11 +102,7 @@ def choose_profile(
     available_ram_gb: float | None = None,
     total_ram_gb: float | None = None,
 ) -> LocalAiProfile:
-    """Pick a generation profile from config + measured hardware.
-
-    Thresholds are intentionally modest: tiny SD img2img peaks well under 8 GB
-    when resolution/steps are constrained. Values are refined by profiling.
-    """
+    """Pick the highest realism profile that can safely run on this machine."""
     name = (requested or settings.local_ai_profile or "auto").strip().lower()
     if name in PROFILES:
         return PROFILES[name]
@@ -99,12 +111,17 @@ def choose_profile(
         cuda_available, _ = _cuda_info()
         total_ram_gb, available_ram_gb = _ram_gb()
 
-    if cuda_available and (available_ram_gb or 0) >= 2.0:
-        return PROFILES["high"]
-    # Balanced only when there is comfortable headroom after the model is resident.
-    if (available_ram_gb or 0) >= 4.5 and (total_ram_gb or 0) >= 12.0:
+    avail = available_ram_gb or 0.0
+    total = total_ram_gb or 0.0
+
+    # Peak RSS for tiny-sd was ~2.7 GB; leave headroom for OS + browser.
+    if cuda_available and avail >= 2.0:
+        return PROFILES["quality"]
+    if avail >= 3.8 and total >= 12.0:
+        return PROFILES["quality"]
+    if avail >= 2.6 and total >= 12.0:
         return PROFILES["balanced"]
-    return PROFILES["low_memory"]
+    return PROFILES["preview"]
 
 
 @lru_cache(maxsize=1)
@@ -136,6 +153,11 @@ def detect_hardware() -> HardwareSnapshot:
         snapshot.model_id,
     )
     return snapshot
+
+
+def refresh_hardware() -> HardwareSnapshot:
+    detect_hardware.cache_clear()
+    return detect_hardware()
 
 
 def hardware_dict() -> dict:

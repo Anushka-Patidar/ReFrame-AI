@@ -10,6 +10,8 @@ import type {
   HomeProfile,
   Inspiration,
   Professional,
+  RegionConstraint,
+  RegionAction,
   Room,
   SessionUser,
   SpaceCheck,
@@ -183,4 +185,50 @@ export const api = {
     const suffix = params.toString() ? `?${params.toString()}` : ''
     return request<Professional[]>(`/professionals${suffix}`)
   },
+
+  listRegionConstraints: (token: string, roomId: string) =>
+    request<RegionConstraint[]>(`/rooms/${roomId}/region-constraints`, { token }),
+
+  createRegionConstraint: (
+    token: string,
+    roomId: string,
+    payload: {
+      action: RegionAction
+      label: string
+      image_width: number
+      image_height: number
+      mask: File
+    },
+  ) => {
+    const formData = new FormData()
+    formData.append('action', payload.action)
+    formData.append('label', payload.label)
+    formData.append('image_width', String(payload.image_width))
+    formData.append('image_height', String(payload.image_height))
+    formData.append('mask', payload.mask)
+    const headers = new Headers()
+    headers.set('Authorization', `Bearer ${token}`)
+    return fetch(`${API_BASE_URL}/rooms/${roomId}/region-constraints`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    }).then(async (response) => {
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') ?? ''
+        const fallbackMessage = 'Unable to save region constraint.'
+        if (contentType.includes('application/json')) {
+          const errorPayload = (await response.json()) as { detail?: string }
+          throw new Error(errorPayload.detail ?? fallbackMessage)
+        }
+        throw new Error(fallbackMessage)
+      }
+      return (await response.json()) as RegionConstraint
+    })
+  },
+
+  deleteRegionConstraint: (token: string, roomId: string, constraintId: string) =>
+    request<ApiMessage>(`/rooms/${roomId}/region-constraints/${constraintId}`, {
+      method: 'DELETE',
+      token,
+    }),
 }

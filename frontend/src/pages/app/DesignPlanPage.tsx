@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, Pencil } from 'lucide-react'
+import { ArrowRight, Paintbrush, Pencil } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { EditorialImage } from '../../components/EditorialImage'
 import { GenerationProgress } from '../../components/GenerationProgress'
@@ -263,6 +263,15 @@ export function DesignPlanPage() {
             >
               <Pencil className="h-4 w-4" />
               {isSaving ? 'Saving...' : 'Save Requirements'}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/app/design-studio/${roomId}/mark-elements`)}
+              disabled={!room?.original_image_url || isGenerating}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-sand-200 bg-white px-4 py-3 text-sm font-medium text-ink-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Paintbrush className="h-4 w-4" />
+              Mark Room Elements
             </button>
             <button
               type="button"

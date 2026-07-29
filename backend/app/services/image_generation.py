@@ -13,7 +13,8 @@ import httpx
 from PIL import Image, ImageFilter, ImageOps, ImageStat
 
 from app.core.config import settings
-from app.services.design_brief import build_design_brief
+from app.db.database import get_database
+from app.models.collections import REGION_CONSTRAINTS
 from app.services.generation_runtime import (
     USER_BUSY_ERROR,
     USER_GENERIC_ERROR,
@@ -22,7 +23,7 @@ from app.services.generation_runtime import (
 )
 from app.services.hardware import detect_hardware, hardware_dict
 from app.services.media import GENERATED_UPLOADS_ROOT, ROOM_UPLOADS_ROOT
-from app.services.providers.local_diffusion import get_local_provider
+from app.services.pipeline.types import ObjectMask
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,38 @@ def load_room_image(original_image_url: str | None, *, require: bool = True) -> 
     return image
 
 
+async def _load_user_region_masks(room: dict) -> list[ObjectMask]:
+    """Load user-painted region constraints and convert them into pipeline masks."""
+    try:
+        room_id = room.get("_id")
+        user_id = room.get("user_id")
+        if room_id is None or user_id is None:
+            return []
+
+        cursor = get_database()[REGION_CONSTRAINTS].find({"room_id": room_id, "user_id": user_id})
+        docs = await cursor.to_list(length=500)
+        result: list[ObjectMask] = []
+        for doc in docs:
+            mask_path = doc.get("mask_path")
+            if not mask_path:
+                continue
+            action = str(doc.get("action") or "CHANGE").strip().upper()
+            label = str(doc.get("label") or "")
+            result.append(
+                ObjectMask(
+                    object_id=str(doc.get("_id")),
+                    action=action,
+                    label=label,
+                    mask_path=str(mask_path),
+                    available=True,
+                )
+            )
+        return result
+    except Exception:
+        logger.exception("Failed to load user region masks")
+        return []
+
+
 def _edge_map(image: Image.Image, size: tuple[int, int] = (96, 96)) -> Image.Image:
     gray = image.resize(size, Image.Resampling.BILINEAR).convert("L")
     return gray.filter(ImageFilter.FIND_EDGES)
@@ -156,19 +189,31 @@ def looks_photoreal_enough(image: Image.Image) -> bool:
 
 
 def contains_human_face(image: Image.Image) -> bool:
+    """Best-effort face check. Never crash generation if OpenCV is incomplete."""
     if not _HAS_CV2 or cv2 is None or np is None:
         return False
-    rgb = np.array(image.convert("RGB"))
-    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    gray = cv2.equalizeHist(gray)
-    cascade = cv2.CascadeClassifier(
-        getattr(cv2.data, "haarcascades", "") + "haarcascade_frontalface_default.xml"
-    )
-    if cascade.empty():
+    try:
+        if not hasattr(cv2, "CascadeClassifier"):
+            return False
+        rgb = np.array(image.convert("RGB"))
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        if hasattr(cv2, "equalizeHist"):
+            gray = cv2.equalizeHist(gray)
+        cascade_path = ""
+        data = getattr(cv2, "data", None)
+        if data is not None:
+            cascade_path = getattr(data, "haarcascades", "") + "haarcascade_frontalface_default.xml"
+        cascade = cv2.CascadeClassifier(cascade_path)
+        if cascade is None or cascade.empty():
+            return False
+        min_face = max(48, min(image.size) // 10)
+        faces = cascade.detectMultiScale(
+            gray, scaleFactor=1.12, minNeighbors=5, minSize=(min_face, min_face)
+        )
+        return len(faces) > 0
+    except Exception:
+        logger.debug("Face detection skipped due to OpenCV error", exc_info=True)
         return False
-    min_face = max(48, min(image.size) // 10)
-    faces = cascade.detectMultiScale(gray, scaleFactor=1.12, minNeighbors=5, minSize=(min_face, min_face))
-    return len(faces) > 0
 
 
 def _bytes_from_image(image: Image.Image) -> bytes:
@@ -204,56 +249,74 @@ def get_generation_progress() -> dict:
     return generation_gate.snapshot().to_dict()
 
 
-def _generate_sync(room: dict, requirements: dict | None, revision_note: str | None) -> tuple[str, str]:
+def _generate_sync(
+    room: dict,
+    requirements: dict | None,
+    revision_note: str | None,
+    memory_document: dict | None = None,
+    user_region_masks: list[ObjectMask] | None = None,
+) -> tuple[str, str, dict]:
+    """Run modular pipeline and persist the accepted candidate.
+
+    Returns (relative_path, engine_string, metadata_dict).
+    """
+    from app.services.pipeline.orchestrator import run_redesign_pipeline
+
     GENERATED_UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
     original = load_room_image(room.get("original_image_url"), require=True)
-    brief = build_design_brief(room, requirements, revision_note)
-    provider = get_local_provider()
 
     try:
-        result = provider.generate_room(original, brief, brief.transformation_strength)
+        run = run_redesign_pipeline(
+            source_image=original,
+            room=room,
+            requirements=requirements,
+            revision_note=revision_note,
+            memory_document=memory_document,
+            user_region_masks=user_region_masks,
+        )
     except RuntimeError:
         raise
 
-    final_image = result.image
+    final_image = run.image
     try:
-        if contains_human_face(final_image):
-            raise InsufficientTransformError(USER_GENERIC_ERROR)
-        if images_byte_identical(original, final_image):
-            raise InsufficientTransformError(USER_GENERIC_ERROR)
-        if not looks_photoreal_enough(final_image):
-            logger.warning("REFRAME_GEN rejected non-photoreal / collapsed output")
-            raise InsufficientTransformError(USER_GENERIC_ERROR)
-
-        delta = mean_abs_delta(original, final_image)
-        similarity = structure_similarity(original, final_image)
-        if delta < min_delta_for_strength(brief.transformation_strength):
-            logger.warning("REFRAME_GEN rejected low delta=%.1f", delta)
-            raise InsufficientTransformError(USER_GENERIC_ERROR)
-        if not architecture_ok(original, final_image, brief.transformation_strength):
-            logger.warning("REFRAME_GEN rejected structure similarity=%.2f", similarity)
-            raise InsufficientTransformError(USER_GENERIC_ERROR)
-
         filename = f"{uuid4().hex}.jpg"
         relative = f"generated/{filename}"
         (GENERATED_UPLOADS_ROOT / filename).write_bytes(_bytes_from_image(final_image))
 
-        logger.info(
-            "REFRAME_GEN saved=%s provider=%s model=%s device=%s delta=%.1f structure=%.2f mem=%s",
-            relative,
-            result.provider,
-            result.model,
-            result.device,
-            delta,
-            similarity,
-            provider.memory_profile,
+        validation = run.artifacts.validation.to_dict() if run.artifacts.validation else {}
+        meta_payload = run.artifacts.metadata.to_dict() if run.artifacts.metadata else {}
+        delta = next(
+            (
+                m.get("value")
+                for m in validation.get("metrics", [])
+                if m.get("name") == "mean_abs_delta"
+            ),
+            None,
+        )
+        similarity = next(
+            (
+                m.get("value")
+                for m in validation.get("metrics", [])
+                if m.get("name") == "structure_similarity"
+            ),
+            None,
         )
 
-        meta = (
-            f"{result.engine}|mode=local-img2img|brief_strength={brief.transformation_strength}"
-            f"|structure={similarity:.2f}|delta={delta:.1f}"
+        logger.info(
+            "REFRAME_GEN saved=%s provider=%s model=%s attempts=%s delta=%s structure=%s",
+            relative,
+            run.generation.provider,
+            run.generation.model,
+            meta_payload.get("attempts"),
+            delta,
+            similarity,
         )
-        return relative, meta
+
+        engine = (
+            f"{run.generation.engine}|mode=pipeline|brief_strength={run.brief.transformation_strength}"
+            f"|structure={similarity}|delta={delta}|attempts={meta_payload.get('attempts')}"
+        )
+        return relative, engine, meta_payload
     finally:
         try:
             final_image.close()
@@ -269,7 +332,8 @@ async def generate_design_image(
     room: dict,
     requirements: dict | None,
     revision_note: str | None = None,
-) -> tuple[str, str]:
+    memory_document: dict | None = None,
+) -> tuple[str, str, dict]:
     """Persist a locally redesigned room image. Never return the original as success."""
     if (settings.image_provider or "local").strip().lower() != "local":
         raise InsufficientTransformError(USER_GENERIC_ERROR)
@@ -280,7 +344,15 @@ async def generate_design_image(
     failed = False
     error_message: str | None = None
     try:
-        return await asyncio.to_thread(_generate_sync, room, requirements, revision_note)
+        user_region_masks = await _load_user_region_masks(room)
+        return await asyncio.to_thread(
+            _generate_sync,
+            room,
+            requirements,
+            revision_note,
+            memory_document,
+            user_region_masks,
+        )
     except InsufficientTransformError as exc:
         failed = True
         error_message = str(exc) or USER_GENERIC_ERROR

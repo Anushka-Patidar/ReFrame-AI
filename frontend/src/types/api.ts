@@ -74,6 +74,18 @@ export type DesignRequirements = {
   notes: string[]
 }
 
+export type RegionAction = 'KEEP' | 'CHANGE' | 'REMOVE'
+
+export type RegionConstraint = {
+  id: string
+  action: RegionAction
+  label: string
+  mask_url: string
+  image_width: number
+  image_height: number
+  created_at: string
+}
+
 export type SpaceCheck = {
   room_size: string
   checks: Array<{ item: string; status: string; note: string }>
