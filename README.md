@@ -1,4 +1,4 @@
-# ReFrame
+# ReFrame-AI
 
 ReFrame is an AI-powered interior design and home planning platform built with:
 
@@ -7,10 +7,13 @@ ReFrame is an AI-powered interior design and home planning platform built with:
 - `FastAPI` for backend APIs
 - `MongoDB` for data persistence
 
+Local room redesign uses `IMAGE_PROVIDER=local` (Diffusers img2img). No paid image API is required.
+
 ## Project structure
 
-- `frontend/` contains the React application with public pages and authenticated app pages
-- `backend/` contains the FastAPI application, route modules, schemas, and MongoDB setup
+- `frontend/` — React application (public + authenticated app pages)
+- `backend/` — FastAPI application, routes, schemas, and MongoDB setup
+- `docs/` — implementation notes
 
 ## Frontend routes
 
@@ -35,35 +38,6 @@ Authenticated:
 - `/app/profile`
 - `/app/settings`
 
-## Backend endpoints
-
-- `POST /api/auth/signup`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
-- `GET /api/dashboard/summary`
-- `GET /api/profile`
-- `PUT /api/profile`
-- `GET /api/homes/me`
-- `PUT /api/homes/me`
-- `POST /api/rooms`
-- `GET /api/rooms`
-- `GET /api/rooms/{room_id}`
-- `POST /api/rooms/{room_id}/upload`
-- `POST /api/rooms/{room_id}/chat`
-- `GET /api/rooms/{room_id}/requirements`
-- `PUT /api/rooms/{room_id}/requirements`
-- `POST /api/rooms/{room_id}/space-check`
-- `POST /api/rooms/{room_id}/generate`
-- `GET /api/rooms/{room_id}/designs`
-- `POST /api/rooms/{room_id}/designs/{design_id}/revise`
-- `GET /api/scores/{design_id}`
-- `POST /api/briefs/{design_id}/generate`
-- `GET /api/briefs`
-- `POST /api/briefs/{brief_id}/share`
-- `GET /api/inspirations`
-- `POST /api/inspirations`
-- `GET /api/professionals`
-
 ## Run frontend
 
 ```bash
@@ -83,20 +57,10 @@ uvicorn app.main:app --reload
 
 Make sure MongoDB is running locally at `mongodb://localhost:27017`, or update `backend/.env` with your own connection string before starting the API.
 
-## Strongest AI setup (recommended)
-
-ReFrame uses the strongest available model stack automatically:
-
-1. **Claude** (`ANTHROPIC_API_KEY`) for design chat + accurate Keep/Remove/Add briefs
-2. **OpenAI Images** (`OPENAI_API_KEY`) for photoreal room redesigns
-3. **Pollinations** free image fallback if OpenAI image is unavailable
-4. **Local trained rules** if no API keys are set
-
-Add keys in `backend/.env`:
+Local generation settings (see `backend/.env.example`):
 
 ```env
-ANTHROPIC_API_KEY=your_anthropic_key
-OPENAI_API_KEY=your_openai_key
+IMAGE_PROVIDER=local
+LOCAL_MODEL_ID=segmind/tiny-sd
+LOCAL_AI_PROFILE=auto
 ```
-
-Then restart the backend. Without keys, chat and generation still work using the local trained design engine.
